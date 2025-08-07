@@ -1,30 +1,33 @@
 from flask import Flask, jsonify
-import requests
-from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright
 
 app = Flask(__name__)
 
 @app.route("/products")
-def scrape():
-    url = "https://www.club72.co.uk/shop"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    r = requests.get(url, headers=headers)
-    soup = BeautifulSoup(r.text, "html.parser")
+def get_products():
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto("https://www.club72.co.uk/shop", timeout=60000)
 
-    products = []
+        page.wait_for_selector("li.product", timeout=10000)
+        product_elements = page.query_selector_all("li.product")
 
-    for item in soup.select('.product-grid-item'):
-        name = item.select_one('.woocommerce-loop-product__title')
-        price = item.select_one('.woocommerce-Price-amount')
-        link = item.select_one('a')
-        image = item.select_one('img')
+        products = []
 
-        if name and price and link:
-            products.append({
-                "name": name.text.strip(),
-                "price": price.text.strip(),
-                "url": link['href'],
-                "image": image['src'] if image else None
-            })
+        for item in product_elements:
+            name = item.query_selector("h2.woocommerce-loop-product__title")
+            price = item.query_selector("span.woocommerce-Price-amount")
+            link = item.query_selector("a")
+            image = item.query_selector("img")
 
-    return jsonify(products)
+            if name and price and link:
+                products.append({
+                    "name": name.inner_text().strip(),
+                    "price": price.inner_text().strip(),
+                    "url": link.get_attribute("href"),
+                    "image": image.get_attribute("src") if image else None
+                })
+
+        browser.close()
+        return jsonify(products)
