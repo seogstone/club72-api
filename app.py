@@ -1,33 +1,37 @@
 from flask import Flask, jsonify
-from playwright.sync_api import sync_playwright
+import requests
+from bs4 import BeautifulSoup
+import json
 
 app = Flask(__name__)
 
 @app.route("/products")
 def get_products():
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.goto("https://www.club72.co.uk/shop", timeout=60000)
+    url = "https://www.club72.co.uk/shop"
+    headers = {"User-Agent": "Mozilla/5.0"}
 
-        page.wait_for_selector("li.product", timeout=10000)
-        product_elements = page.query_selector_all("li.product")
+    try:
+        r = requests.get(url, headers=headers, timeout=30)
+        soup = BeautifulSoup(r.text, "html.parser")
 
-        products = []
+        script_tag = soup.find("script", id="__NEXT_DATA__")
+        if not script_tag:
+            return jsonify({"error": "No embedded JSON found"}), 500
 
-        for item in product_elements:
-            name = item.query_selector("h2.woocommerce-loop-product__title")
-            price = item.query_selector("span.woocommerce-Price-amount")
-            link = item.query_selector("a")
-            image = item.query_selector("img")
+        data = json.loads(script_tag.string)
 
-            if name and price and link:
-                products.append({
-                    "name": name.inner_text().strip(),
-                    "price": price.inner_text().strip(),
-                    "url": link.get_attribute("href"),
-                    "image": image.get_attribute("src") if image else None
-                })
+        # NOTE: Structure may change – this is a sample structure
+        items = []
+        products = data.get("props", {}).get("pageProps", {}).get("products", [])
 
-        browser.close()
-        return jsonify(products)
+        for product in products:
+            items.append({
+                "name": product.get("title"),
+                "price": product.get("variants", [{}])[0].get("price"),
+                "url": f"https://www.club72.co.uk/shop/{product.get('slug')}",
+                "image": product.get("assetUrl")
+            })
+
+        return jsonify(items)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
